@@ -1,13 +1,12 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 :root {
-  --background: #f7f5f2;
-  --foreground: #0b0f1a;
-  --surface: #ffffff;
-  --accent: #ff6b3d;
-  --accent-2: #2ab3ff;
-  --muted: #6a6f7c;
-  --stroke: #e7e2dc;
+  --background: #f2f5ff;
+  --foreground: #0b1220;
+  --surface: rgba(255, 255, 255, 0.78);
+  --stroke: rgba(77, 98, 255, 0.2);
+  --font-body: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  --font-display: "Hiragino Mincho ProN", "Yu Mincho", "MS PMincho", serif;
 }
 
 @theme inline {
@@ -16,12 +15,35 @@
   --font-sans: var(--font-body);
 }
 
+* {
+  box-sizing: border-box;
+}
+
 body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(110, 131, 255, 0.3) 0%, rgba(110, 131, 255, 0) 38%),
+    radial-gradient(circle at 100% 0%, rgba(77, 210, 255, 0.26) 0%, rgba(77, 210, 255, 0) 32%),
+    linear-gradient(160deg, #eef2ff 0%, #f7fbff 55%, #f1f6ff 100%);
   color: var(--foreground);
-  font-family: var(--font-body), system-ui, sans-serif;
+  font-family: var(--font-body);
+  min-height: 100vh;
 }
 
 .font-display {
-  font-family: var(--font-display), system-ui, sans-serif;
+  font-family: var(--font-display);
+}
+
+@keyframes complete-swoop {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(30px) scale(0.95);
+  }
+}
+
+.complete-swoop {
+  animation: complete-swoop 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }

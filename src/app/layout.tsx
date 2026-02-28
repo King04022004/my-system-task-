@@ -1,22 +1,9 @@
-import type { Metadata } from "next";
-import { Noto_Sans_JP, Space_Grotesk } from "next/font/google";
+﻿import type { Metadata } from "next";
 import "./globals.css";
 
-const bodyFont = Noto_Sans_JP({
-  variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const displayFont = Space_Grotesk({
-  variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
 export const metadata: Metadata = {
-  title: "Aurora LP",
-  description: "最短で立ち上がる、運用前提のLP基盤。",
+  title: "個人用タスク管理システム：要件定義まとめ",
+  description: "個人用タスク管理システムの要件定義まとめ。",
 };
 
 export default function RootLayout({
@@ -26,9 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja">
-      <body className={`${bodyFont.variable} ${displayFont.variable}`}>
-        {children}
-      </body>
+      <body className="font-sans">{children}</body>
     </html>
   );
 }

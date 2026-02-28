@@ -1,391 +1,788 @@
-const highlights = [
-  {
-    title: "LP公開まで最短1日",
-    body: "最初の公開に必要な構成を最小単位で整理。あとはコピーを差し替えるだけ。",
-  },
-  {
-    title: "運用しやすい構造",
-    body: "セクションごとに目的を分解。差し替えの影響範囲が小さく、ABテストも簡単。",
-  },
-  {
-    title: "拡張前提の設計",
-    body: "問い合わせ・計測・導線などの追加を想定。早期の無理を避ける土台。",
-  },
-];
+﻿"use client";
 
-const metrics = [
-  { label: "平均立ち上げ期間", value: "7日→2日" },
-  { label: "初回CVR改善幅", value: "+38%" },
-  { label: "運用工数削減", value: "-52%" },
-];
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-const plans = [
-  {
-    name: "Starter",
-    price: "¥0",
-    desc: "検証用の最小構成",
-    items: ["ヒーロー + 概要 + CTA", "計測導線の雛形", "無制限の複製"],
-    accent: false,
-  },
-  {
-    name: "Launch",
-    price: "¥9,800",
-    desc: "本番運用に必要な構成",
-    items: ["全セクション解放", "フォーム連携ガイド", "運用テンプレ付き"],
-    accent: true,
-  },
-  {
-    name: "Scale",
-    price: "¥29,800",
-    desc: "チーム運用向け",
-    items: ["複数LP管理", "役割別レビュー導線", "改善レポート雛形"],
-    accent: false,
-  },
-];
+type Bucket = "today" | "upcoming" | "inbox" | "completed";
+type DropZone = Exclude<Bucket, "completed"> | "trash";
 
-const faqs = [
-  {
-    q: "このまま公開しても問題ありませんか？",
-    a: "コピーとCTAを差し替えるだけでも公開できます。必要に応じて導線や計測を追加してください。",
-  },
-  {
-    q: "デザインは変更できますか？",
-    a: "もちろん可能です。各セクションは独立しているので、差し替えや削除も簡単です。",
-  },
-  {
-    q: "運用開始後の改善はどう進めますか？",
-    a: "セクション単位でABテストができる設計なので、影響を限定しながら改善できます。",
-  },
-];
+type Task = {
+  id: string;
+  title: string;
+  dueDate: string | null;
+  bucket: Bucket;
+  createdAt: string;
+  completedAt: string | null;
+  overdue: boolean;
+};
+
+type StoredState = {
+  tasks: Task[];
+  lastActiveDate: string;
+};
+
+const STORAGE_KEY = "focus-task-system-v1";
+
+function ymd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(base: Date, days: number): Date {
+  const next = new Date(base);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function toJapaneseDate(dateText: string): string {
+  const [y, m, d] = dateText.split("-");
+  return `${y}/${m}/${d}`;
+}
+
+function ensureTaskConsistency(task: Task, todayText: string): Task {
+  if (task.completedAt) {
+    return { ...task, bucket: "completed", overdue: false };
+  }
+
+  if (!task.dueDate) {
+    return { ...task, bucket: "inbox", overdue: false };
+  }
+
+  if (task.dueDate <= todayText) {
+    return { ...task, bucket: "today", overdue: task.dueDate < todayText };
+  }
+
+  return { ...task, bucket: "upcoming", overdue: false };
+}
+
+function rolloverTasks(tasks: Task[], todayText: string): Task[] {
+  return tasks.map((task) => ensureTaskConsistency(task, todayText));
+}
+
+function sortByPriority(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    if (a.overdue !== b.overdue) return a.overdue ? -1 : 1;
+    if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) {
+      return a.dueDate.localeCompare(b.dueDate);
+    }
+    if (a.dueDate && !b.dueDate) return -1;
+    if (!a.dueDate && b.dueDate) return 1;
+    return b.createdAt.localeCompare(a.createdAt);
+  });
+}
+
+function seedTasks(todayText: string): Task[] {
+  const today = new Date(`${todayText}T00:00:00`);
+  return [
+    {
+      id: crypto.randomUUID(),
+      title: "企画書の構成ラフを作る",
+      dueDate: todayText,
+      bucket: "today",
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      overdue: false,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: "週次レビューの要点整理",
+      dueDate: todayText,
+      bucket: "today",
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      overdue: false,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: "明日、顧客提案の最終チェック",
+      dueDate: ymd(addDays(today, 1)),
+      bucket: "upcoming",
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      overdue: false,
+    },
+    {
+      id: crypto.randomUUID(),
+      title: "新しいタスク分類の案",
+      dueDate: null,
+      bucket: "inbox",
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      overdue: false,
+    },
+  ];
+}
 
 export default function Home() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [currentDate, setCurrentDate] = useState<string>(ymd(new Date()));
+  const [taskTitleInput, setTaskTitleInput] = useState<string>("");
+  const [taskDateInput, setTaskDateInput] = useState<string>("");
+  const [showMorningPopup, setShowMorningPopup] = useState<boolean>(true);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [activeDropZone, setActiveDropZone] = useState<DropZone | null>(null);
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+  const [ready, setReady] = useState<boolean>(false);
+  const [inputError, setInputError] = useState<string>("");
+  const [lastDeletedTask, setLastDeletedTask] = useState<Task | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const today = ymd(new Date());
+    setCurrentDate(today);
+
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setTasks(seedTasks(today));
+        setReady(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as StoredState;
+      const normalized = rolloverTasks(parsed.tasks ?? [], today);
+      setTasks(normalized);
+    } catch {
+      setTasks(seedTasks(today));
+    } finally {
+      setReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+
+    const state: StoredState = {
+      tasks,
+      lastActiveDate: currentDate,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }, [tasks, currentDate, ready]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = ymd(new Date());
+      if (now !== currentDate) {
+        setCurrentDate(now);
+        setTasks((prev) => rolloverTasks(prev, now));
+        setShowMorningPopup(true);
+      }
+    }, 60_000);
+
+    return () => clearInterval(timer);
+  }, [currentDate]);
+
+  useEffect(() => {
+    if (!lastDeletedTask) return;
+    const timeoutId = window.setTimeout(() => {
+      setLastDeletedTask(null);
+    }, 8000);
+    return () => window.clearTimeout(timeoutId);
+  }, [lastDeletedTask]);
+
+  const todayTasks = useMemo(() => {
+    return sortByPriority(tasks.filter((task) => task.bucket === "today" && !task.completedAt));
+  }, [tasks]);
+
+  const upcomingTasks = useMemo(() => {
+    return sortByPriority(tasks.filter((task) => task.bucket === "upcoming" && !task.completedAt));
+  }, [tasks]);
+
+  const inboxTasks = useMemo(() => {
+    return sortByPriority(tasks.filter((task) => task.bucket === "inbox" && !task.completedAt));
+  }, [tasks]);
+
+  const completedTasks = useMemo(
+    () => tasks.filter((task) => task.bucket === "completed" && task.completedAt),
+    [tasks],
+  );
+
+  const yesterday = ymd(addDays(new Date(`${currentDate}T00:00:00`), -1));
+  const yesterdayCarryOver = todayTasks.filter((task) => task.dueDate === yesterday);
+  const todayDueTasks = todayTasks.filter((task) => task.dueDate === currentDate);
+
+  const doneTodayCount = useMemo(
+    () =>
+      completedTasks.filter(
+        (task) => task.completedAt && task.completedAt.slice(0, 10) === currentDate,
+      ).length,
+    [completedTasks, currentDate],
+  );
+
+  const totalToday = todayTasks.length + doneTodayCount;
+  const meter = totalToday === 0 ? 0 : Math.round((doneTodayCount / totalToday) * 100);
+
+  function addTask(titleRaw: string, dueDateRaw: string) {
+    const title = titleRaw.trim();
+    if (!title) {
+      setInputError("タスク名を入力してください。");
+      return;
+    }
+
+    const dueDate = dueDateRaw || null;
+    const bucket: Bucket = !dueDate
+      ? "inbox"
+      : dueDate <= currentDate
+        ? "today"
+        : "upcoming";
+
+    const newTask: Task = {
+      id: crypto.randomUUID(),
+      title,
+      dueDate,
+      bucket,
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      overdue: Boolean(dueDate && dueDate < currentDate),
+    };
+
+    setTasks((prev) => [newTask, ...prev]);
+    setTaskTitleInput("");
+    setInputError("");
+  }
+
+  function onSubmitTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    addTask(taskTitleInput, taskDateInput);
+  }
+
+  function moveTaskToBucket(taskId: string, destination: Exclude<Bucket, "completed">) {
+    setTasks((prev) =>
+      prev.map((task) => {
+        if (task.id !== taskId || task.completedAt) return task;
+
+        if (destination === "today") {
+          return {
+            ...task,
+            bucket: "today",
+            dueDate: currentDate,
+            overdue: false,
+          };
+        }
+
+        if (destination === "upcoming") {
+          const fallbackDate = ymd(addDays(new Date(`${currentDate}T00:00:00`), 1));
+          return {
+            ...task,
+            bucket: "upcoming",
+            dueDate: task.dueDate && task.dueDate > currentDate ? task.dueDate : fallbackDate,
+            overdue: false,
+          };
+        }
+
+        return {
+          ...task,
+          bucket: "inbox",
+          dueDate: null,
+          overdue: false,
+        };
+      }),
+    );
+  }
+
+  function completeTask(taskId: string) {
+    setCompletingTaskId(taskId);
+    window.setTimeout(() => {
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                bucket: "completed",
+                completedAt: new Date().toISOString(),
+                overdue: false,
+              }
+            : task,
+        ),
+      );
+      setCompletingTaskId(null);
+    }, 360);
+  }
+
+  function reactivateTask(taskId: string) {
+    setTasks((prev) =>
+      prev.map((task) => {
+        if (task.id !== taskId) return task;
+        return {
+          ...task,
+          bucket: "today",
+          dueDate: currentDate,
+          completedAt: null,
+          overdue: false,
+        };
+      }),
+    );
+  }
+
+  function deleteTask(taskId: string) {
+    const removed = tasks.find((task) => task.id === taskId);
+    if (!removed) return;
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setLastDeletedTask(removed);
+  }
+
+  function undoDeleteTask() {
+    if (!lastDeletedTask) return;
+    setTasks((prev) => [ensureTaskConsistency(lastDeletedTask, currentDate), ...prev]);
+    setLastDeletedTask(null);
+  }
+
+  function exportTasks() {
+    const payload: StoredState = { tasks, lastActiveDate: currentDate };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `focusdock-backup-${currentDate}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importTasks(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const raw = typeof reader.result === "string" ? reader.result : "";
+        const parsed = JSON.parse(raw) as StoredState;
+        const safeTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+        setTasks(rolloverTasks(safeTasks, currentDate));
+      } catch {
+        setInputError("バックアップの読み込みに失敗しました。");
+      } finally {
+        if (importInputRef.current) importInputRef.current.value = "";
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function onDropToZone(zone: DropZone) {
+    if (!draggingTaskId) return;
+    if (zone === "trash") {
+      deleteTask(draggingTaskId);
+    } else {
+      moveTaskToBucket(draggingTaskId, zone);
+    }
+    setDraggingTaskId(null);
+    setActiveDropZone(null);
+  }
+
+  if (!ready) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-6 text-slate-700">
+        読み込み中...
+      </main>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[color:var(--background)] text-[color:var(--foreground)]">
-      <header className="sticky top-0 z-40 border-b border-black/5 bg-[color:var(--background)]/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-[color:var(--accent)] to-[color:var(--accent-2)]" />
+    <main className="relative min-h-screen px-4 py-6 sm:px-6 lg:px-10">
+      {showMorningPopup && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-3xl border border-white/60 bg-white/85 p-6 shadow-[0_30px_100px_rgba(35,55,140,0.35)] backdrop-blur-xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+              Morning Focus
+            </p>
+            <h2 className="mt-2 font-display text-2xl text-slate-900">
+              今日のスタートを宣言
+            </h2>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-indigo-200/70 bg-gradient-to-br from-indigo-50 to-white p-4">
+                <p className="text-xs text-indigo-700">昨日残ったタスク</p>
+                <p className="mt-1 text-3xl font-bold text-indigo-900">{yesterdayCarryOver.length}</p>
+              </div>
+              <div className="rounded-2xl border border-cyan-200/70 bg-gradient-to-br from-cyan-50 to-white p-4">
+                <p className="text-xs text-cyan-700">今日のタスク</p>
+                <p className="mt-1 text-3xl font-bold text-cyan-900">{todayDueTasks.length}</p>
+              </div>
+            </div>
+            <div className="mt-5 rounded-2xl border border-slate-200/70 bg-white/80 p-4 text-sm text-slate-700">
+              他の情報は一旦閉じて、今日の動きだけに集中します。
+            </div>
+            <button
+              onClick={() => setShowMorningPopup(false)}
+              className="mt-6 w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-300/50 transition hover:brightness-110"
+            >
+              今日を開始する
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mx-auto w-full max-w-7xl">
+        <header className="mb-6 rounded-3xl border border-white/60 bg-white/75 p-5 shadow-[0_18px_50px_rgba(58,88,175,0.18)] backdrop-blur-xl">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="font-display text-lg font-semibold tracking-tight">
-                Aurora LP
-              </p>
-              <p className="text-xs text-[color:var(--muted)]">
-                Launch-ready base
-              </p>
+              <p className="text-xs uppercase tracking-[0.28em] text-indigo-500">Personal Task System</p>
+              <h1 className="mt-2 font-display text-3xl text-slate-900 sm:text-4xl">FocusDock</h1>
+              <p className="mt-2 text-sm text-slate-600">{toJapaneseDate(currentDate)} の集中計画</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={exportTasks}
+                className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
+              >
+                JSON出力
+              </button>
+              <button
+                onClick={() => importInputRef.current?.click()}
+                className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
+              >
+                JSON読込
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                onChange={importTasks}
+                className="hidden"
+              />
             </div>
           </div>
-          <nav className="hidden items-center gap-6 text-sm font-medium md:flex">
-            <a className="text-[color:var(--muted)] hover:text-black" href="#flow">
-              構成
-            </a>
-            <a className="text-[color:var(--muted)] hover:text-black" href="#proof">
-              実績
-            </a>
-            <a
-              className="text-[color:var(--muted)] hover:text-black"
-              href="#pricing"
-            >
-              料金
-            </a>
-            <a className="text-[color:var(--muted)] hover:text-black" href="#faq">
-              FAQ
-            </a>
-          </nav>
-          <button className="rounded-full bg-black px-5 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-black/90">
-            資料を受け取る
-          </button>
-        </div>
-      </header>
+        </header>
 
-      <main>
-        <section className="relative overflow-hidden">
-          <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(255,107,61,0.25),_transparent_55%),radial-gradient(circle_at_30%_30%,_rgba(42,179,255,0.25),_transparent_60%)]" />
-          <div className="mx-auto grid w-full max-w-6xl gap-10 px-6 py-20 md:grid-cols-[1.2fr_0.8fr] md:py-28">
-            <div className="space-y-6">
-              <p className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--muted)]">
-                Launch in days
-              </p>
-              <h1 className="font-display text-4xl font-semibold leading-tight tracking-tight md:text-5xl">
-                LPの土台を、最短で強く。
-                <br />
-                企画と運用のズレをなくす構成。
-              </h1>
-              <p className="text-lg text-[color:var(--muted)]">
-                企画〜公開までの「迷い」と「やり直し」を最小化。
-                実運用を前提にしたLP基盤で、初速と継続改善を両立します。
-              </p>
-              <div className="flex flex-wrap gap-4">
-                <button className="rounded-full bg-[color:var(--accent)] px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-[color:var(--accent)]/30 transition hover:-translate-y-0.5">
-                  今すぐテンプレを使う
-                </button>
-                <button className="rounded-full border border-black/10 bg-white px-6 py-3 text-sm font-semibold text-black transition hover:-translate-y-0.5">
-                  導入相談をする
-                </button>
+        <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+          <section
+            onDragOver={(event) => {
+              event.preventDefault();
+              setActiveDropZone("today");
+            }}
+            onDragLeave={() => setActiveDropZone(null)}
+            onDrop={() => onDropToZone("today")}
+            className={`rounded-3xl border p-5 shadow-[0_18px_45px_rgba(51,78,164,0.14)] backdrop-blur-xl transition ${
+              activeDropZone === "today"
+                ? "border-cyan-400/80 bg-cyan-50/80"
+                : "border-white/70 bg-white/75"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900">今日のタスク</h2>
+                <p className="text-sm text-slate-600">今日集中する項目だけを表示</p>
               </div>
-              <div className="flex flex-wrap gap-6 text-xs text-[color:var(--muted)]">
-                <span>ノーコード運用にも対応</span>
-                <span>計測導線の雛形付き</span>
-                <span>導入社数 120+</span>
+              <div className="min-w-[180px]">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>達成度メーター</span>
+                  <span>{meter}%</span>
+                </div>
+                <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-slate-200/80">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-cyan-500 to-emerald-400 transition-all duration-500"
+                    style={{ width: `${meter}%` }}
+                  />
+                </div>
               </div>
             </div>
-            <div className="rounded-3xl border border-[color:var(--stroke)] bg-white p-6 shadow-[0_30px_60px_rgba(11,15,26,0.08)]">
+
+            <div className="mt-4 space-y-3">
+              {todayTasks.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-4 py-6 text-sm text-slate-500">
+                  右側からドラッグして今日の計画を作成できます。
+                </div>
+              )}
+
+              {todayTasks.map((task) => (
+                <article
+                  key={task.id}
+                  draggable
+                  onDragStart={() => setDraggingTaskId(task.id)}
+                  onDragEnd={() => {
+                    setDraggingTaskId(null);
+                    setActiveDropZone(null);
+                  }}
+                  className={`rounded-2xl border px-4 py-3 shadow-sm transition ${
+                    task.overdue
+                      ? "border-rose-300 bg-gradient-to-r from-rose-50 to-white"
+                      : "border-slate-200 bg-white/90"
+                  } ${completingTaskId === task.id ? "complete-swoop" : ""}`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{task.title}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {task.overdue
+                          ? `期限超過: ${task.dueDate ? toJapaneseDate(task.dueDate) : "未設定"}`
+                          : `予定日: ${task.dueDate ? toJapaneseDate(task.dueDate) : "未設定"}`}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => completeTask(task.id)}
+                      className="rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-200 transition hover:brightness-110"
+                    >
+                      完了
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {task.bucket !== "today" && (
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "today")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        今日へ
+                      </button>
+                    )}
+                    {task.bucket !== "upcoming" && (
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "upcoming")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        今後へ
+                      </button>
+                    )}
+                    {task.bucket !== "inbox" && (
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "inbox")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        箱へ
+                      </button>
+                    )}
+                    <button
+                      onClick={() => deleteTask(task.id)}
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700"
+                    >
+                      削除
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/70 bg-white/70 p-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-[color:var(--muted)]">
-                  LP構成プレビュー
-                </p>
-                <span className="rounded-full bg-black px-3 py-1 text-xs text-white">
-                  Draft
-                </span>
+                <h3 className="text-sm font-semibold text-slate-800">完了済みエリア</h3>
+                <span className="text-xs text-slate-500">{completedTasks.length} 件</span>
               </div>
-              <div className="mt-6 space-y-4">
-                {[
-                  "Hero + Value",
-                  "Problem / Solution",
-                  "Social Proof",
-                  "Feature Grid",
-                  "Pricing + CTA",
-                ].map((item) => (
+              <div className="mt-3 space-y-2">
+                {completedTasks.slice(0, 8).map((task) => (
                   <div
-                    key={item}
-                    className="rounded-2xl border border-dashed border-[color:var(--stroke)] bg-[color:var(--background)] px-4 py-3 text-sm font-medium"
+                    key={task.id}
+                    className="rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 to-white px-3 py-2"
                   >
-                    {item}
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-emerald-900">{task.title}</p>
+                      <button
+                        onClick={() => reactivateTask(task.id)}
+                        className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                      >
+                        戻す
+                      </button>
+                    </div>
                   </div>
                 ))}
-              </div>
-              <div className="mt-6 rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white">
-                Run A/B Test → 15 variants
+                {completedTasks.length === 0 && (
+                  <p className="text-xs text-slate-500">完了タスクはここに移動します。</p>
+                )}
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section id="flow" className="mx-auto w-full max-w-6xl px-6 py-16">
-          <div className="grid gap-10 md:grid-cols-[0.9fr_1.1fr]">
-            <div className="space-y-4">
-              <h2 className="font-display text-3xl font-semibold tracking-tight">
-                3ステップで構築が終わる。
-              </h2>
-              <p className="text-[color:var(--muted)]">
-                作業順を固定し、どこから着手しても完成に向かう構成にしています。
+          <aside className="space-y-4">
+            <section className="rounded-3xl border border-white/70 bg-white/75 p-5 shadow-[0_18px_45px_rgba(51,78,164,0.14)] backdrop-blur-xl">
+              <h2 className="text-lg font-semibold text-slate-900">タスク入力</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                タスク名と日付を分けて入力できます。日付未設定ならインボックスに入ります。
               </p>
-            </div>
-            <div className="grid gap-6 md:grid-cols-3">
-              {[
-                "要件整理: ペルソナと訴求を1枚に集約",
-                "構成配置: セクション単位で組み立て",
-                "公開準備: 計測と導線を確認して完了",
-              ].map((step, index) => (
-                <div
-                  key={step}
-                  className="rounded-2xl border border-[color:var(--stroke)] bg-white p-5 shadow-sm"
-                >
-                  <p className="text-xs font-semibold text-[color:var(--muted)]">
-                    Step {index + 1}
-                  </p>
-                  <p className="mt-3 text-sm font-semibold">{step}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {highlights.map((item) => (
-              <div
-                key={item.title}
-                className="rounded-2xl border border-[color:var(--stroke)] bg-white p-6"
-              >
-                <h3 className="font-display text-lg font-semibold">
-                  {item.title}
-                </h3>
-                <p className="mt-3 text-sm text-[color:var(--muted)]">
-                  {item.body}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section
-          id="proof"
-          className="mx-auto w-full max-w-6xl px-6 py-16"
-        >
-          <div className="rounded-3xl border border-[color:var(--stroke)] bg-white p-10">
-            <div className="flex flex-wrap items-end justify-between gap-6">
-              <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                  Proof
-                </p>
-                <h2 className="font-display text-3xl font-semibold tracking-tight">
-                  数字で見る改善効果
-                </h2>
-              </div>
-              <button className="rounded-full border border-black/10 px-5 py-2 text-sm font-semibold">
-                事例をダウンロード
-              </button>
-            </div>
-            <div className="mt-8 grid gap-6 md:grid-cols-3">
-              {metrics.map((metric) => (
-                <div
-                  key={metric.label}
-                  className="rounded-2xl bg-[color:var(--background)] p-6"
-                >
-                  <p className="text-2xl font-semibold">{metric.value}</p>
-                  <p className="mt-2 text-xs text-[color:var(--muted)]">
-                    {metric.label}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="pricing" className="mx-auto w-full max-w-6xl px-6 py-16">
-          <div className="space-y-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--muted)]">
-              Pricing
-            </p>
-            <h2 className="font-display text-3xl font-semibold tracking-tight">
-              最初は小さく、成長したら拡張。
-            </h2>
-          </div>
-          <div className="mt-10 grid gap-6 md:grid-cols-3">
-            {plans.map((plan) => (
-              <div
-                key={plan.name}
-                className={`rounded-3xl border p-6 ${
-                  plan.accent
-                    ? "border-black bg-black text-white"
-                    : "border-[color:var(--stroke)] bg-white"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-display text-xl font-semibold">
-                    {plan.name}
-                  </h3>
-                  {plan.accent ? (
-                    <span className="rounded-full bg-white/15 px-3 py-1 text-xs">
-                      人気
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-3 text-3xl font-semibold">{plan.price}</p>
-                <p
-                  className={`mt-2 text-sm ${
-                    plan.accent ? "text-white/70" : "text-[color:var(--muted)]"
-                  }`}
-                >
-                  {plan.desc}
-                </p>
-                <div className="mt-6 space-y-3 text-sm">
-                  {plan.items.map((item) => (
-                    <div key={item} className="flex items-center gap-2">
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          plan.accent ? "bg-white" : "bg-black"
-                        }`}
-                      />
-                      <span
-                        className={plan.accent ? "text-white/80" : undefined}
-                      >
-                        {item}
-                      </span>
-                    </div>
-                  ))}
+              <form onSubmit={onSubmitTask} className="mt-4 space-y-3">
+                <input
+                  type="text"
+                  value={taskTitleInput}
+                  onChange={(event) => {
+                    setTaskTitleInput(event.target.value);
+                    if (inputError) setInputError("");
+                  }}
+                  placeholder="例: 企画書を仕上げる"
+                  className="w-full rounded-2xl border border-slate-300/90 bg-white/90 px-3 py-2 text-sm outline-none transition focus:border-indigo-400"
+                />
+                {inputError && <p className="text-xs text-rose-600">{inputError}</p>}
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="date"
+                    value={taskDateInput}
+                    onChange={(event) => setTaskDateInput(event.target.value)}
+                    className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-sm text-slate-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setTaskDateInput(currentDate)}
+                    className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
+                  >
+                    今日
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaskDateInput(ymd(addDays(new Date(`${currentDate}T00:00:00`), 1)))}
+                    className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
+                  >
+                    明日
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTaskDateInput("")}
+                    className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
+                  >
+                    日付なし
+                  </button>
                 </div>
                 <button
-                  className={`mt-8 w-full rounded-full px-4 py-2 text-sm font-semibold ${
-                    plan.accent
-                      ? "bg-white text-black"
-                      : "border border-black/10 bg-white"
-                  }`}
+                  type="submit"
+                  className="rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-200 transition hover:brightness-110"
                 >
-                  {plan.accent ? "今すぐ開始" : "詳細を見る"}
+                  追加
                 </button>
-              </div>
-            ))}
-          </div>
-        </section>
+              </form>
+            </section>
 
-        <section id="faq" className="mx-auto w-full max-w-6xl px-6 py-16">
-          <div className="grid gap-10 md:grid-cols-[0.9fr_1.1fr]">
-            <div className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[color:var(--muted)]">
-                FAQ
-              </p>
-              <h2 className="font-display text-3xl font-semibold tracking-tight">
-                よくある質問
-              </h2>
-              <p className="text-[color:var(--muted)]">
-                LP構築に関する疑問を先回りで整理しています。
-              </p>
-            </div>
-            <div className="space-y-6">
-              {faqs.map((faq) => (
-                <div
-                  key={faq.q}
-                  className="rounded-2xl border border-[color:var(--stroke)] bg-white p-6"
-                >
-                  <p className="text-sm font-semibold">{faq.q}</p>
-                  <p className="mt-3 text-sm text-[color:var(--muted)]">
-                    {faq.a}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="mx-auto w-full max-w-6xl px-6 pb-20">
-          <div className="rounded-3xl bg-gradient-to-br from-black via-[#111827] to-[#1f2937] p-10 text-white md:p-14">
-            <div className="grid gap-8 md:grid-cols-[1.2fr_0.8fr]">
-              <div className="space-y-4">
-                <h2 className="font-display text-3xl font-semibold">
-                  まずは1枚。最速で公開できる状態に。
-                </h2>
-                <p className="text-white/70">
-                  テンプレートを使って最小構成のLPを立ち上げ、成果に合わせて拡張しましょう。
-                </p>
+            <section
+              onDragOver={(event) => {
+                event.preventDefault();
+                setActiveDropZone("upcoming");
+              }}
+              onDragLeave={() => setActiveDropZone(null)}
+              onDrop={() => onDropToZone("upcoming")}
+              className={`rounded-3xl border p-5 shadow-[0_18px_45px_rgba(51,78,164,0.14)] backdrop-blur-xl transition ${
+                activeDropZone === "upcoming"
+                  ? "border-cyan-400/80 bg-cyan-50/80"
+                  : "border-white/70 bg-white/75"
+              }`}
+            >
+              <h2 className="text-lg font-semibold text-slate-900">今後のタスク</h2>
+              <div className="mt-3 space-y-2">
+                {upcomingTasks.map((task) => (
+                  <article
+                    key={task.id}
+                    draggable
+                    onDragStart={() => setDraggingTaskId(task.id)}
+                    onDragEnd={() => {
+                      setDraggingTaskId(null);
+                      setActiveDropZone(null);
+                    }}
+                    className="cursor-grab rounded-xl border border-slate-200 bg-white/90 px-3 py-2 active:cursor-grabbing"
+                  >
+                    <p className="text-sm text-slate-800">{task.title}</p>
+                    <p className="text-xs text-slate-500">
+                      {task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "today")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        今日へ
+                      </button>
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "inbox")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        箱へ
+                      </button>
+                      <button
+                        onClick={() => deleteTask(task.id)}
+                        className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {upcomingTasks.length === 0 && (
+                  <p className="text-xs text-slate-500">先の予定タスクはありません。</p>
+                )}
               </div>
-              <div className="flex flex-col gap-3 md:items-end">
-                <button className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-black">
-                  テンプレをダウンロード
-                </button>
-                <button className="rounded-full border border-white/20 px-6 py-3 text-sm font-semibold text-white">
-                  デモを予約する
-                </button>
-                <p className="text-xs text-white/60">
-                  無料プレビューは24時間で失効します。
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
+            </section>
 
-      <footer className="border-t border-black/5">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10 text-sm text-[color:var(--muted)] md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="font-display text-lg font-semibold text-black">
-              Aurora LP
-            </p>
-            <p>運用前提のLP基盤を提供</p>
-          </div>
-          <div className="flex flex-wrap gap-6">
-            <a className="hover:text-black" href="#flow">
-              構成
-            </a>
-            <a className="hover:text-black" href="#pricing">
-              料金
-            </a>
-            <a className="hover:text-black" href="#faq">
-              FAQ
-            </a>
-            <a className="hover:text-black" href="#">
-              プライバシー
-            </a>
+            <section
+              onDragOver={(event) => {
+                event.preventDefault();
+                setActiveDropZone("inbox");
+              }}
+              onDragLeave={() => setActiveDropZone(null)}
+              onDrop={() => onDropToZone("inbox")}
+              className={`rounded-3xl border p-5 shadow-[0_18px_45px_rgba(51,78,164,0.14)] backdrop-blur-xl transition ${
+                activeDropZone === "inbox"
+                  ? "border-fuchsia-300/80 bg-fuchsia-50/70"
+                  : "border-white/70 bg-white/75"
+              }`}
+            >
+              <h2 className="text-lg font-semibold text-slate-900">とりあえず箱（インボックス）</h2>
+              <div className="mt-3 space-y-2">
+                {inboxTasks.map((task) => (
+                  <article
+                    key={task.id}
+                    draggable
+                    onDragStart={() => setDraggingTaskId(task.id)}
+                    onDragEnd={() => {
+                      setDraggingTaskId(null);
+                      setActiveDropZone(null);
+                    }}
+                    className="cursor-grab rounded-xl border border-fuchsia-200/80 bg-gradient-to-r from-fuchsia-50 to-white px-3 py-2 active:cursor-grabbing"
+                  >
+                    <p className="text-sm text-slate-800">{task.title}</p>
+                    <p className="text-xs text-slate-500">日付未確定</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "today")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        今日へ
+                      </button>
+                      <button
+                        onClick={() => moveTaskToBucket(task.id, "upcoming")}
+                        className="rounded-lg border border-slate-300 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        今後へ
+                      </button>
+                      <button
+                        onClick={() => deleteTask(task.id)}
+                        className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {inboxTasks.length === 0 && (
+                  <p className="text-xs text-slate-500">未確定タスクはありません。</p>
+                )}
+              </div>
+            </section>
+
+            <section
+              onDragOver={(event) => {
+                event.preventDefault();
+                setActiveDropZone("trash");
+              }}
+              onDragLeave={() => setActiveDropZone(null)}
+              onDrop={() => onDropToZone("trash")}
+              className={`rounded-3xl border p-5 shadow-[0_18px_45px_rgba(51,78,164,0.14)] backdrop-blur-xl transition ${
+                activeDropZone === "trash"
+                  ? "border-rose-400/90 bg-rose-50/80"
+                  : "border-rose-200/80 bg-white/75"
+              }`}
+            >
+              <h2 className="text-lg font-semibold text-rose-700">ゴミ箱</h2>
+              <p className="mt-2 text-xs text-rose-600">タスクをここにドラッグすると削除されます。</p>
+            </section>
+          </aside>
+        </div>
+      </div>
+      {lastDeletedTask && (
+        <div className="fixed bottom-4 left-1/2 z-50 w-[min(92vw,560px)] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-slate-700">「{lastDeletedTask.title}」を削除しました</p>
+            <button
+              onClick={undoDeleteTask}
+              className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+            >
+              元に戻す
+            </button>
           </div>
         </div>
-      </footer>
-    </div>
+      )}
+    </main>
   );
 }
