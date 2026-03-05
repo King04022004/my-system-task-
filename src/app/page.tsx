@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 type Bucket = "today" | "upcoming" | "inbox" | "completed";
 type DropZone = Exclude<Bucket, "completed"> | "trash";
@@ -422,6 +423,12 @@ export default function Home() {
               <p className="mt-2 text-sm text-slate-600">{toJapaneseDate(currentDate)} の集中計画</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Link
+                href="/analytics"
+                className="rounded-xl border border-indigo-300 bg-indigo-50/80 px-3 py-2 text-xs font-semibold text-indigo-700 hover:border-indigo-400"
+              >
+                分析ページ
+              </Link>
               <button
                 onClick={exportTasks}
                 className="rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-indigo-300"
