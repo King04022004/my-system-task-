@@ -1,12 +1,14 @@
 ﻿@import "tailwindcss";
 
 :root {
-  --background: #f2f5ff;
-  --foreground: #0b1220;
-  --surface: rgba(255, 255, 255, 0.78);
-  --stroke: rgba(77, 98, 255, 0.2);
+  --background: #f4f2ee;
+  --foreground: #232a33;
+  --muted: #5f6874;
+  --panel: #fcfbf9;
+  --panel-soft: #f6f4f0;
+  --line: #dcd7cf;
+  --accent: #3f5a6b;
   --font-body: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
-  --font-display: "Hiragino Mincho ProN", "Yu Mincho", "MS PMincho", serif;
 }
 
 @theme inline {
@@ -20,17 +22,99 @@
 }
 
 body {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(110, 131, 255, 0.3) 0%, rgba(110, 131, 255, 0) 38%),
-    radial-gradient(circle at 100% 0%, rgba(77, 210, 255, 0.26) 0%, rgba(77, 210, 255, 0) 32%),
-    linear-gradient(160deg, #eef2ff 0%, #f7fbff 55%, #f1f6ff 100%);
-  color: var(--foreground);
-  font-family: var(--font-body);
+  margin: 0;
   min-height: 100vh;
+  color: var(--foreground);
+  background:
+    radial-gradient(circle at 12% 10%, rgba(63, 90, 107, 0.08), rgba(63, 90, 107, 0) 30%),
+    linear-gradient(160deg, #f7f6f2 0%, #f2f0eb 50%, #ece9e3 100%);
+  font-family: var(--font-body);
 }
 
-.font-display {
-  font-family: var(--font-display);
+.app-shell {
+  min-height: 100vh;
+  padding: 1.25rem;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--panel);
+  padding: 1rem;
+  box-shadow: 0 4px 14px rgba(35, 42, 51, 0.06);
+}
+
+.panel-soft {
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  background: var(--panel-soft);
+  padding: 0.75rem;
+}
+
+.task-card {
+  border: 1px solid var(--line);
+  border-radius: 0.875rem;
+  background: #fff;
+  padding: 0.75rem;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.625rem;
+  background: #fff;
+  padding: 0.5rem 0.75rem;
+  color: var(--foreground);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.btn-primary,
+.btn-ghost,
+.btn-mini,
+.btn-mini-danger {
+  border-radius: 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  padding: 0.5rem 0.75rem;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.btn-ghost,
+.btn-mini {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--foreground);
+  padding: 0.45rem 0.7rem;
+}
+
+.btn-ghost:hover,
+.btn-mini:hover {
+  border-color: var(--accent);
+}
+
+.btn-mini-danger {
+  border: 1px solid #d7bcbc;
+  background: #fbf4f4;
+  color: #7c3a3a;
+  padding: 0.45rem 0.7rem;
+}
+
+.btn-mini-danger:hover {
+  border-color: #c89b9b;
 }
 
 @keyframes complete-swoop {
@@ -40,10 +124,10 @@ body {
   }
   100% {
     opacity: 0;
-    transform: translateX(30px) scale(0.95);
+    transform: translateX(20px) scale(0.98);
   }
 }
 
 .complete-swoop {
-  animation: complete-swoop 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation: complete-swoop 0.26s ease forwards;
 }
