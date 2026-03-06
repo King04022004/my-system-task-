@@ -253,6 +253,20 @@ export default function Home() {
     addTask(taskTitleInput, taskDateInput, taskPriorityInput);
   }
 
+  function setTaskPriority(taskId: string, priority: TaskPriority) {
+    setTasks((prev) =>
+      prev.map((task) => (task.id === taskId ? { ...task, priority } : task)),
+    );
+  }
+
+  function priorityMenuActions(task: Task): Array<{ label: string; onClick: () => void }> {
+    const others = priorityOptions.filter((priority) => priority !== task.priority);
+    return others.map((priority) => ({
+      label: `優先度を${priorityLabel(priority)}に変更`,
+      onClick: () => setTaskPriority(task.id, priority),
+    }));
+  }
+
   function moveTaskToBucket(taskId: string, destination: Exclude<Bucket, "completed">) {
     setTasks((prev) =>
       prev.map((task) => {
@@ -541,6 +555,7 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-2">
                       {renderTaskMenu(task.id, [
+                        ...priorityMenuActions(task),
                         { label: "週間タスクへ", onClick: () => moveTaskToBucket(task.id, "upcoming") },
                         { label: "箱へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
                         { label: "削除", onClick: () => deleteTask(task.id), danger: true },
@@ -631,6 +646,7 @@ export default function Home() {
                 {weeklyTasks.map((task) => (
                   <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
                     {renderTaskMenu(task.id, [
+                      ...priorityMenuActions(task),
                       { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
                       { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
@@ -662,6 +678,7 @@ export default function Home() {
                 {futureTasks.map((task) => (
                   <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
                     {renderTaskMenu(task.id, [
+                      ...priorityMenuActions(task),
                       { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
                       { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
@@ -693,6 +710,7 @@ export default function Home() {
                 {inboxTasks.map((task) => (
                   <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
                     {renderTaskMenu(task.id, [
+                      ...priorityMenuActions(task),
                       { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
                       { label: "週間タスクへ", onClick: () => moveTaskToBucket(task.id, "upcoming") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
