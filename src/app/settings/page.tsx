@@ -1,25 +1,37 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
+  AppSettings,
   DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
+  weekStartMonday,
+  ymd,
 } from "../../lib/task-store";
 
 export default function SettingsPage() {
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    if (typeof window === "undefined") return DEFAULT_SETTINGS;
+    const loaded = loadSettings();
+    const today = ymd(new Date());
+    const thisWeekStart = weekStartMonday(today);
+    if (loaded.weeklyGoalWeekStart !== thisWeekStart) {
+      const reset = {
+        ...loaded,
+        weeklyGoalText: "",
+        weeklyGoalWeekStart: thisWeekStart,
+      } satisfies AppSettings;
+      saveSettings(reset);
+      return reset;
+    }
+    return loaded;
+  });
   const [savedAt, setSavedAt] = useState("");
 
-  useEffect(() => {
-    const settings = loadSettings();
-    if (settings.completedVisibleDays !== 2) {
-      saveSettings(DEFAULT_SETTINGS);
-    }
-  }, []);
-
-  function saveFixedPolicy() {
-    saveSettings(DEFAULT_SETTINGS);
+  function saveCurrentSettings() {
+    saveSettings(settings);
     setSavedAt(new Date().toLocaleString("ja-JP"));
   }
 
@@ -43,11 +55,39 @@ export default function SettingsPage() {
         <section className="panel space-y-4">
           <div className="panel-soft">
             <p className="text-sm font-semibold text-[var(--foreground)]">完了済みエリア表示日数</p>
-            <p className="mt-1 text-sm text-[var(--muted)]">本日と昨日の2日分を固定で表示します。</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">トップ画面の完了済みエリアに表示する日数を選択します。</p>
             <p className="mt-2 text-xs text-[var(--muted)]">自動削除は無効です。履歴は保持され、履歴ページで参照できます。</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                onClick={() => setSettings((prev) => (prev ? { ...prev, completedVisibleDays: 1 } : prev))}
+                className={settings.completedVisibleDays === 1 ? "btn-primary" : "btn-mini"}
+              >
+                今日のみ
+              </button>
+              <button
+                onClick={() => setSettings((prev) => (prev ? { ...prev, completedVisibleDays: 2 } : prev))}
+                className={settings.completedVisibleDays === 2 ? "btn-primary" : "btn-mini"}
+              >
+                今日+昨日
+              </button>
+            </div>
           </div>
 
-          <button onClick={saveFixedPolicy} className="btn-primary">この方針を保存</button>
+          <div className="panel-soft">
+            <p className="text-sm font-semibold text-[var(--foreground)]">今週の主要目標</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">週次で1件のみ保持します（週開始は月曜日）。</p>
+            <input
+              type="text"
+              value={settings.weeklyGoalText}
+              onChange={(event) =>
+                setSettings((prev) => (prev ? { ...prev, weeklyGoalText: event.target.value } : prev))
+              }
+              placeholder="例: 金曜までに提案資料の初稿を完成"
+              className="input mt-3"
+            />
+          </div>
+
+          <button onClick={saveCurrentSettings} className="btn-primary">設定を保存</button>
           {savedAt && <p className="text-xs text-[var(--muted)]">最終保存: {savedAt}</p>}
         </section>
       </div>

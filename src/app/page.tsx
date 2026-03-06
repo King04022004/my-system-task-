@@ -4,18 +4,24 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   addDays,
+  AppSettings,
   Bucket,
   completedInMainWindow,
   ensureTaskConsistency,
   isCompletedOnDate,
   loadSettings,
   rolloverTasks,
+  saveSettings,
   seedTasks,
+  SETTINGS_KEY,
   sortByPriority,
   STORAGE_KEY,
   StoredState,
   Task,
+  TaskPriority,
   toJapaneseDate,
+  weekEndSunday,
+  weekStartMonday,
   ymd,
 } from "../lib/task-store";
 
@@ -26,6 +32,7 @@ export default function Home() {
   const [currentDate, setCurrentDate] = useState<string>(ymd(new Date()));
   const [taskTitleInput, setTaskTitleInput] = useState<string>("");
   const [taskDateInput, setTaskDateInput] = useState<string>("");
+  const [taskPriorityInput, setTaskPriorityInput] = useState<TaskPriority>("medium");
   const [showMorningPopup, setShowMorningPopup] = useState<boolean>(true);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [activeDropZone, setActiveDropZone] = useState<DropZone | null>(null);
@@ -33,6 +40,8 @@ export default function Home() {
   const [ready, setReady] = useState<boolean>(false);
   const [inputError, setInputError] = useState<string>("");
   const [lastDeletedTask, setLastDeletedTask] = useState<Task | null>(null);
+  const [openTaskMenuId, setOpenTaskMenuId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(loadSettings());
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -53,9 +62,33 @@ export default function Home() {
     } catch {
       setTasks(seedTasks(today));
     } finally {
-      loadSettings();
+      const loaded = loadSettings();
+      const thisWeekStart = weekStartMonday(today);
+      if (loaded.weeklyGoalWeekStart !== thisWeekStart) {
+        const reset: AppSettings = {
+          ...loaded,
+          weeklyGoalText: "",
+          weeklyGoalWeekStart: thisWeekStart,
+        };
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(reset));
+        setSettings(reset);
+      } else {
+        setSettings(loaded);
+      }
       setReady(true);
     }
+  }, []);
+
+  useEffect(() => {
+    function syncSettings() {
+      setSettings(loadSettings());
+    }
+    window.addEventListener("focus", syncSettings);
+    document.addEventListener("visibilitychange", syncSettings);
+    return () => {
+      window.removeEventListener("focus", syncSettings);
+      document.removeEventListener("visibilitychange", syncSettings);
+    };
   }, []);
 
   useEffect(() => {
@@ -89,14 +122,58 @@ export default function Home() {
     return () => window.clearTimeout(timeoutId);
   }, [lastDeletedTask]);
 
+  useEffect(() => {
+    function closeTaskMenu() {
+      setOpenTaskMenuId(null);
+    }
+    window.addEventListener("pointerdown", closeTaskMenu);
+    return () => window.removeEventListener("pointerdown", closeTaskMenu);
+  }, []);
+
+  const currentWeekStart = useMemo(() => weekStartMonday(currentDate), [currentDate]);
+  const currentWeekEnd = useMemo(() => weekEndSunday(currentDate), [currentDate]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (settings.weeklyGoalWeekStart === currentWeekStart) return;
+    const reset: AppSettings = {
+      ...settings,
+      weeklyGoalText: "",
+      weeklyGoalWeekStart: currentWeekStart,
+    };
+    setSettings(reset);
+    saveSettings(reset);
+  }, [currentWeekStart, ready, settings]);
+
   const todayTasks = useMemo(
     () => sortByPriority(tasks.filter((task) => task.bucket === "today" && !task.completedAt)),
     [tasks],
   );
 
-  const upcomingTasks = useMemo(
-    () => sortByPriority(tasks.filter((task) => task.bucket === "upcoming" && !task.completedAt)),
-    [tasks],
+  const weeklyTasks = useMemo(
+    () =>
+      sortByPriority(
+        tasks.filter(
+          (task) =>
+            task.bucket === "upcoming" &&
+            !task.completedAt &&
+            Boolean(task.dueDate && task.dueDate <= currentWeekEnd),
+        ),
+      ),
+    [tasks, currentWeekEnd],
+  );
+
+  const futureTasks = useMemo(
+    () =>
+      sortByPriority(
+        tasks.filter(
+          (task) =>
+            task.bucket === "upcoming" &&
+            !task.completedAt &&
+            Boolean(task.dueDate && task.dueDate > currentWeekEnd),
+        ),
+      ),
+    [tasks, currentWeekEnd],
   );
 
   const inboxTasks = useMemo(
@@ -105,8 +182,8 @@ export default function Home() {
   );
 
   const completedTasksForMain = useMemo(
-    () => completedInMainWindow(tasks, currentDate),
-    [tasks, currentDate],
+    () => completedInMainWindow(tasks, currentDate, settings.completedVisibleDays),
+    [tasks, currentDate, settings.completedVisibleDays],
   );
 
   const yesterday = ymd(addDays(new Date(`${currentDate}T00:00:00`), -1));
@@ -120,8 +197,31 @@ export default function Home() {
 
   const totalToday = todayTasks.length + doneTodayCount;
   const meter = totalToday === 0 ? 0 : Math.round((doneTodayCount / totalToday) * 100);
+  const priorityOptions: TaskPriority[] = ["high", "medium", "low"];
 
-  function addTask(titleRaw: string, dueDateRaw: string) {
+  function priorityLabel(priority: TaskPriority): string {
+    if (priority === "high") return "高";
+    if (priority === "medium") return "中";
+    return "低";
+  }
+
+  function priorityBadgeClass(priority: TaskPriority): string {
+    if (priority === "high") return "priority-badge priority-badge-high";
+    if (priority === "medium") return "priority-badge priority-badge-medium";
+    return "priority-badge priority-badge-low";
+  }
+
+  function saveWeeklyGoal(value: string) {
+    const next: AppSettings = {
+      ...settings,
+      weeklyGoalText: value,
+      weeklyGoalWeekStart: currentWeekStart,
+    };
+    setSettings(next);
+    saveSettings(next);
+  }
+
+  function addTask(titleRaw: string, dueDateRaw: string, priority: TaskPriority) {
     const title = titleRaw.trim();
     if (!title) {
       setInputError("タスク名を入力してください。");
@@ -134,6 +234,7 @@ export default function Home() {
     const newTask: Task = {
       id: crypto.randomUUID(),
       title,
+      priority,
       dueDate,
       bucket,
       createdAt: new Date().toISOString(),
@@ -143,12 +244,13 @@ export default function Home() {
 
     setTasks((prev) => [newTask, ...prev]);
     setTaskTitleInput("");
+    setTaskPriorityInput("medium");
     setInputError("");
   }
 
   function onSubmitTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    addTask(taskTitleInput, taskDateInput);
+    addTask(taskTitleInput, taskDateInput, taskPriorityInput);
   }
 
   function moveTaskToBucket(taskId: string, destination: Exclude<Bucket, "completed">) {
@@ -275,6 +377,43 @@ export default function Home() {
     setActiveDropZone(null);
   }
 
+  function renderTaskMenu(
+    taskId: string,
+    actions: Array<{ label: string; onClick: () => void; danger?: boolean }>,
+    mode: "floating" | "inline" = "floating",
+  ) {
+    const isOpen = openTaskMenuId === taskId;
+    return (
+      <div className={mode === "inline" ? "task-actions task-actions-inline" : "task-actions"}>
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpenTaskMenuId((prev) => (prev === taskId ? null : taskId));
+          }}
+          className={`task-actions-trigger ${isOpen ? "task-actions-trigger-visible" : ""}`}
+          aria-expanded={isOpen}
+          aria-label="タスク操作"
+        >
+          ...
+        </button>
+        <div className={`task-actions-menu ${isOpen ? "task-actions-menu-open" : ""}`} onClick={(event) => event.stopPropagation()}>
+          {actions.map((action) => (
+            <button
+              key={action.label}
+              onClick={() => {
+                action.onClick();
+                setOpenTaskMenuId(null);
+              }}
+              className={action.danger ? "task-actions-item task-actions-item-danger" : "task-actions-item"}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (!ready) {
     return (
       <main className="app-shell">
@@ -313,8 +452,7 @@ export default function Home() {
         <header className="panel">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Personal Task System</p>
-              <h1 className="mt-2 text-3xl font-semibold text-[var(--foreground)]">FocusDock</h1>
+              <h1 className="text-4xl font-semibold text-[var(--foreground)]">Personal Task System</h1>
               <p className="mt-1 text-sm text-[var(--muted)]">{toJapaneseDate(currentDate)} の集中計画</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -333,6 +471,25 @@ export default function Home() {
             </div>
           </div>
         </header>
+
+        <section className="panel">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">今週の主要目標</h2>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                対象週: {toJapaneseDate(currentWeekStart)} - {toJapaneseDate(currentWeekEnd)}
+              </p>
+            </div>
+            <Link href="/settings" className="btn-mini">設定で編集</Link>
+          </div>
+          <input
+            type="text"
+            value={settings.weeklyGoalText}
+            onChange={(event) => saveWeeklyGoal(event.target.value)}
+            placeholder="例: 金曜までに提案資料の初稿を完成"
+            className="input mt-3"
+          />
+        </section>
 
         <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
           <section
@@ -371,24 +528,25 @@ export default function Home() {
                     setDraggingTaskId(null);
                     setActiveDropZone(null);
                   }}
-                  className={`task-card ${task.overdue ? "border-amber-300" : ""} ${completingTaskId === task.id ? "complete-swoop" : ""}`}
+                  className={`task-card task-card-simple relative ${task.overdue ? "border-amber-300" : ""} ${completingTaskId === task.id ? "complete-swoop" : ""}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-medium text-[var(--foreground)]">{task.title}</p>
-                      <p className="mt-1 text-xs text-[var(--muted)]">
-                        {task.overdue
-                          ? `期限超過: ${task.dueDate ? toJapaneseDate(task.dueDate) : "未設定"}`
-                          : `予定日: ${task.dueDate ? toJapaneseDate(task.dueDate) : "未設定"}`}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-[var(--foreground)]">{task.title}</p>
+                        <span className={priorityBadgeClass(task.priority)}>
+                          優先度 {priorityLabel(task.priority)}
+                        </span>
+                      </div>
                     </div>
-                    <button onClick={() => completeTask(task.id)} className="btn-primary">完了</button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {task.bucket !== "today" && <button onClick={() => moveTaskToBucket(task.id, "today")} className="btn-mini">今日へ</button>}
-                    {task.bucket !== "upcoming" && <button onClick={() => moveTaskToBucket(task.id, "upcoming")} className="btn-mini">今後へ</button>}
-                    {task.bucket !== "inbox" && <button onClick={() => moveTaskToBucket(task.id, "inbox")} className="btn-mini">箱へ</button>}
-                    <button onClick={() => deleteTask(task.id)} className="btn-mini-danger">削除</button>
+                    <div className="flex items-center gap-2">
+                      {renderTaskMenu(task.id, [
+                        { label: "週間タスクへ", onClick: () => moveTaskToBucket(task.id, "upcoming") },
+                        { label: "箱へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
+                        { label: "削除", onClick: () => deleteTask(task.id), danger: true },
+                      ], "inline")}
+                      <button onClick={() => completeTask(task.id)} className="btn-primary">完了</button>
+                    </div>
                   </div>
                 </article>
               ))}
@@ -396,7 +554,9 @@ export default function Home() {
 
             <div className="mt-5 panel-soft">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-[var(--foreground)]">完了済みエリア（本日+昨日）</h3>
+                <h3 className="text-sm font-semibold text-[var(--foreground)]">
+                  完了済みエリア（{settings.completedVisibleDays === 1 ? "本日" : "本日+昨日"}）
+                </h3>
                 <span className="text-xs text-[var(--muted)]">{completedTasksForMain.length} 件</span>
               </div>
               <div className="space-y-2">
@@ -440,6 +600,19 @@ export default function Home() {
                   <button type="button" onClick={() => setTaskDateInput(ymd(addDays(new Date(`${currentDate}T00:00:00`), 1)))} className="btn-mini">明日</button>
                   <button type="button" onClick={() => setTaskDateInput("")} className="btn-mini">日付なし</button>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[var(--muted)]">優先度</span>
+                  {priorityOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setTaskPriorityInput(option)}
+                      className={taskPriorityInput === option ? "btn-primary" : "btn-mini"}
+                    >
+                      {priorityLabel(option)}
+                    </button>
+                  ))}
+                </div>
                 <button type="submit" className="btn-primary">追加</button>
               </form>
             </section>
@@ -453,20 +626,56 @@ export default function Home() {
               onDrop={() => onDropToZone("upcoming")}
               className={`panel ${activeDropZone === "upcoming" ? "ring-1 ring-[var(--accent)]" : ""}`}
             >
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">今後のタスク</h2>
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">週間タスク</h2>
               <div className="mt-3 space-y-2">
-                {upcomingTasks.map((task) => (
-                  <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card">
-                    <p className="text-sm text-[var(--foreground)]">{task.title}</p>
-                    <p className="text-xs text-[var(--muted)]">{task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button onClick={() => moveTaskToBucket(task.id, "today")} className="btn-mini">今日へ</button>
-                      <button onClick={() => moveTaskToBucket(task.id, "inbox")} className="btn-mini">箱へ</button>
-                      <button onClick={() => deleteTask(task.id)} className="btn-mini-danger">削除</button>
+                {weeklyTasks.map((task) => (
+                  <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
+                    {renderTaskMenu(task.id, [
+                      { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
+                      { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
+                      { label: "削除", onClick: () => deleteTask(task.id), danger: true },
+                    ])}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                      <span className={priorityBadgeClass(task.priority)}>
+                        優先度 {priorityLabel(task.priority)}
+                      </span>
                     </div>
+                    <p className="text-xs text-[var(--muted)]">{task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}</p>
                   </article>
                 ))}
-                {upcomingTasks.length === 0 && <p className="text-xs text-[var(--muted)]">先の予定タスクはありません。</p>}
+                {weeklyTasks.length === 0 && <p className="text-xs text-[var(--muted)]">週内の予定タスクはありません。</p>}
+              </div>
+            </section>
+
+            <section
+              onDragOver={(event) => {
+                event.preventDefault();
+                setActiveDropZone("upcoming");
+              }}
+              onDragLeave={() => setActiveDropZone(null)}
+              onDrop={() => onDropToZone("upcoming")}
+              className={`panel ${activeDropZone === "upcoming" ? "ring-1 ring-[var(--accent)]" : ""}`}
+            >
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">今後のタスク</h2>
+              <div className="mt-3 space-y-2">
+                {futureTasks.map((task) => (
+                  <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
+                    {renderTaskMenu(task.id, [
+                      { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
+                      { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
+                      { label: "削除", onClick: () => deleteTask(task.id), danger: true },
+                    ])}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                      <span className={priorityBadgeClass(task.priority)}>
+                        優先度 {priorityLabel(task.priority)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--muted)]">{task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}</p>
+                  </article>
+                ))}
+                {futureTasks.length === 0 && <p className="text-xs text-[var(--muted)]">来週以降のタスクはありません。</p>}
               </div>
             </section>
 
@@ -479,17 +688,22 @@ export default function Home() {
               onDrop={() => onDropToZone("inbox")}
               className={`panel ${activeDropZone === "inbox" ? "ring-1 ring-[var(--accent)]" : ""}`}
             >
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">インボックス</h2>
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">未定タスク</h2>
               <div className="mt-3 space-y-2">
                 {inboxTasks.map((task) => (
-                  <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card">
-                    <p className="text-sm text-[var(--foreground)]">{task.title}</p>
-                    <p className="text-xs text-[var(--muted)]">日付未確定</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button onClick={() => moveTaskToBucket(task.id, "today")} className="btn-mini">今日へ</button>
-                      <button onClick={() => moveTaskToBucket(task.id, "upcoming")} className="btn-mini">今後へ</button>
-                      <button onClick={() => deleteTask(task.id)} className="btn-mini-danger">削除</button>
+                  <article key={task.id} draggable onDragStart={() => setDraggingTaskId(task.id)} onDragEnd={() => { setDraggingTaskId(null); setActiveDropZone(null); }} className="task-card task-card-simple relative">
+                    {renderTaskMenu(task.id, [
+                      { label: "今日へ", onClick: () => moveTaskToBucket(task.id, "today") },
+                      { label: "週間タスクへ", onClick: () => moveTaskToBucket(task.id, "upcoming") },
+                      { label: "削除", onClick: () => deleteTask(task.id), danger: true },
+                    ])}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                      <span className={priorityBadgeClass(task.priority)}>
+                        優先度 {priorityLabel(task.priority)}
+                      </span>
                     </div>
+                    <p className="text-xs text-[var(--muted)]">日付未確定</p>
                   </article>
                 ))}
                 {inboxTasks.length === 0 && <p className="text-xs text-[var(--muted)]">未確定タスクはありません。</p>}
@@ -513,7 +727,7 @@ export default function Home() {
       </div>
 
       {lastDeletedTask && (
-        <div className="fixed bottom-4 left-1/2 z-50 w-[min(92vw,560px)] -translate-x-1/2 rounded-2xl border border-[var(--line)] bg-[var(--panel)] px-4 py-3 shadow">
+        <div className="fixed bottom-4 left-1/2 z-50 w-[min(92vw,560px)] -translate-x-1/2 rounded-2xl border border-[var(--line)] bg-[var(--panel)] px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-[var(--muted)]">「{lastDeletedTask.title}」を削除しました</p>
             <button onClick={undoDeleteTask} className="btn-mini">元に戻す</button>
