@@ -18,6 +18,7 @@ import {
   STORAGE_KEY,
   StoredState,
   Task,
+  TaskCategory,
   TaskPriority,
   toJapaneseDate,
   weekEndSunday,
@@ -33,6 +34,7 @@ export default function Home() {
   const [taskTitleInput, setTaskTitleInput] = useState<string>("");
   const [taskDateInput, setTaskDateInput] = useState<string>("");
   const [taskPriorityInput, setTaskPriorityInput] = useState<TaskPriority>("medium");
+  const [taskCategoryInput, setTaskCategoryInput] = useState<TaskCategory>("personal");
   const [showMorningPopup, setShowMorningPopup] = useState<boolean>(true);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [activeDropZone, setActiveDropZone] = useState<DropZone | null>(null);
@@ -198,6 +200,7 @@ export default function Home() {
   const totalToday = todayTasks.length + doneTodayCount;
   const meter = totalToday === 0 ? 0 : Math.round((doneTodayCount / totalToday) * 100);
   const priorityOptions: TaskPriority[] = ["high", "medium", "low"];
+  const categoryOptions: TaskCategory[] = ["work", "personal"];
 
   function priorityLabel(priority: TaskPriority): string {
     if (priority === "high") return "高";
@@ -205,10 +208,19 @@ export default function Home() {
     return "低";
   }
 
+  function categoryLabel(category: TaskCategory): string {
+    return category === "work" ? "仕事" : "個人";
+  }
+
   function priorityBadgeClass(priority: TaskPriority): string {
     if (priority === "high") return "priority-badge priority-badge-high";
     if (priority === "medium") return "priority-badge priority-badge-medium";
     return "priority-badge priority-badge-low";
+  }
+
+  function categoryBadgeClass(category: TaskCategory): string {
+    if (category === "work") return "category-badge category-badge-work";
+    return "category-badge category-badge-personal";
   }
 
   function saveWeeklyGoal(value: string) {
@@ -221,7 +233,12 @@ export default function Home() {
     saveSettings(next);
   }
 
-  function addTask(titleRaw: string, dueDateRaw: string, priority: TaskPriority) {
+  function addTask(
+    titleRaw: string,
+    dueDateRaw: string,
+    priority: TaskPriority,
+    category: TaskCategory,
+  ) {
     const title = titleRaw.trim();
     if (!title) {
       setInputError("タスク名を入力してください。");
@@ -235,6 +252,7 @@ export default function Home() {
       id: crypto.randomUUID(),
       title,
       priority,
+      category,
       dueDate,
       bucket,
       createdAt: new Date().toISOString(),
@@ -245,12 +263,13 @@ export default function Home() {
     setTasks((prev) => [newTask, ...prev]);
     setTaskTitleInput("");
     setTaskPriorityInput("medium");
+    setTaskCategoryInput("personal");
     setInputError("");
   }
 
   function onSubmitTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    addTask(taskTitleInput, taskDateInput, taskPriorityInput);
+    addTask(taskTitleInput, taskDateInput, taskPriorityInput, taskCategoryInput);
   }
 
   function setTaskPriority(taskId: string, priority: TaskPriority) {
@@ -428,6 +447,16 @@ export default function Home() {
     );
   }
 
+  function renderTaskMeta(task: Task, dateText?: string | null) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className={categoryBadgeClass(task.category)}>{categoryLabel(task.category)}</span>
+        <span className={priorityBadgeClass(task.priority)}>優先度 {priorityLabel(task.priority)}</span>
+        {dateText && <span className="text-[11px] text-[var(--muted)]">期限: {toJapaneseDate(dateText)}</span>}
+      </div>
+    );
+  }
+
   if (!ready) {
     return (
       <main className="app-shell">
@@ -546,12 +575,8 @@ export default function Home() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-[var(--foreground)]">{task.title}</p>
-                        <span className={priorityBadgeClass(task.priority)}>
-                          優先度 {priorityLabel(task.priority)}
-                        </span>
-                      </div>
+                      <p className="text-sm font-medium text-[var(--foreground)]">{task.title}</p>
+                      {renderTaskMeta(task, task.dueDate)}
                     </div>
                     <div className="flex items-center gap-2">
                       {renderTaskMenu(task.id, [
@@ -580,9 +605,13 @@ export default function Home() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-xs font-medium text-[var(--foreground)]">{task.title}</p>
-                        <p className="text-[11px] text-[var(--muted)]">
-                          完了日: {task.completedAt ? toJapaneseDate(task.completedAt.slice(0, 10)) : "-"}
-                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className={categoryBadgeClass(task.category)}>{categoryLabel(task.category)}</span>
+                          <span className={priorityBadgeClass(task.priority)}>優先度 {priorityLabel(task.priority)}</span>
+                          <span className="text-[11px] text-[var(--muted)]">
+                            完了日: {task.completedAt ? toJapaneseDate(task.completedAt.slice(0, 10)) : "-"}
+                          </span>
+                        </div>
                       </div>
                       <button onClick={() => reactivateTask(task.id)} className="btn-mini">戻す</button>
                     </div>
@@ -596,7 +625,7 @@ export default function Home() {
           <aside className="space-y-4">
             <section className="panel">
               <h2 className="text-lg font-semibold text-[var(--foreground)]">タスク入力</h2>
-              <p className="mt-1 text-sm text-[var(--muted)]">日付未設定はインボックスに入ります。</p>
+              <p className="mt-1 text-sm text-[var(--muted)]">仕事と個人を分けて登録できます。日付未設定はインボックスに入ります。</p>
               <form onSubmit={onSubmitTask} className="mt-4 space-y-3">
                 <input
                   type="text"
@@ -614,6 +643,19 @@ export default function Home() {
                   <button type="button" onClick={() => setTaskDateInput(currentDate)} className="btn-mini">今日</button>
                   <button type="button" onClick={() => setTaskDateInput(ymd(addDays(new Date(`${currentDate}T00:00:00`), 1)))} className="btn-mini">明日</button>
                   <button type="button" onClick={() => setTaskDateInput("")} className="btn-mini">日付なし</button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[var(--muted)]">区分</span>
+                  {categoryOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setTaskCategoryInput(option)}
+                      className={taskCategoryInput === option ? "btn-primary" : "btn-mini"}
+                    >
+                      {categoryLabel(option)}
+                    </button>
+                  ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-[var(--muted)]">優先度</span>
@@ -651,13 +693,8 @@ export default function Home() {
                       { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
                     ])}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
-                      <span className={priorityBadgeClass(task.priority)}>
-                        優先度 {priorityLabel(task.priority)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--muted)]">{task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}</p>
+                    <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                    {renderTaskMeta(task, task.dueDate)}
                   </article>
                 ))}
                 {weeklyTasks.length === 0 && <p className="text-xs text-[var(--muted)]">週内の予定タスクはありません。</p>}
@@ -683,13 +720,8 @@ export default function Home() {
                       { label: "未定へ", onClick: () => moveTaskToBucket(task.id, "inbox") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
                     ])}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
-                      <span className={priorityBadgeClass(task.priority)}>
-                        優先度 {priorityLabel(task.priority)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--muted)]">{task.dueDate ? toJapaneseDate(task.dueDate) : "日付未設定"}</p>
+                    <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                    {renderTaskMeta(task, task.dueDate)}
                   </article>
                 ))}
                 {futureTasks.length === 0 && <p className="text-xs text-[var(--muted)]">来週以降のタスクはありません。</p>}
@@ -715,13 +747,9 @@ export default function Home() {
                       { label: "週間タスクへ", onClick: () => moveTaskToBucket(task.id, "upcoming") },
                       { label: "削除", onClick: () => deleteTask(task.id), danger: true },
                     ])}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm text-[var(--foreground)]">{task.title}</p>
-                      <span className={priorityBadgeClass(task.priority)}>
-                        優先度 {priorityLabel(task.priority)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--muted)]">日付未確定</p>
+                    <p className="text-sm text-[var(--foreground)]">{task.title}</p>
+                    {renderTaskMeta(task, null)}
+                    <p className="mt-1 text-xs text-[var(--muted)]">日付未確定</p>
                   </article>
                 ))}
                 {inboxTasks.length === 0 && <p className="text-xs text-[var(--muted)]">未確定タスクはありません。</p>}
@@ -755,3 +783,4 @@ export default function Home() {
     </main>
   );
 }
+

@@ -1,10 +1,12 @@
 ﻿export type Bucket = "today" | "upcoming" | "inbox" | "completed";
 export type TaskPriority = "high" | "medium" | "low";
+export type TaskCategory = "work" | "personal";
 
 export type Task = {
   id: string;
   title: string;
   priority: TaskPriority;
+  category: TaskCategory;
   dueDate: string | null;
   bucket: Bucket;
   createdAt: string;
@@ -66,21 +68,27 @@ export function normalizePriority(value: unknown): TaskPriority {
   return "medium";
 }
 
+export function normalizeCategory(value: unknown): TaskCategory {
+  if (value === "work" || value === "personal") return value;
+  return "personal";
+}
+
 export function ensureTaskConsistency(task: Task, todayText: string): Task {
   const priority = normalizePriority((task as Partial<Task>).priority);
+  const category = normalizeCategory((task as Partial<Task>).category);
   if (task.completedAt) {
-    return { ...task, priority, bucket: "completed", overdue: false };
+    return { ...task, priority, category, bucket: "completed", overdue: false };
   }
 
   if (!task.dueDate) {
-    return { ...task, priority, bucket: "inbox", overdue: false };
+    return { ...task, priority, category, bucket: "inbox", overdue: false };
   }
 
   if (task.dueDate <= todayText) {
-    return { ...task, priority, bucket: "today", overdue: task.dueDate < todayText };
+    return { ...task, priority, category, bucket: "today", overdue: task.dueDate < todayText };
   }
 
-  return { ...task, priority, bucket: "upcoming", overdue: false };
+  return { ...task, priority, category, bucket: "upcoming", overdue: false };
 }
 
 export function rolloverTasks(tasks: Task[], todayText: string): Task[] {
@@ -110,6 +118,7 @@ export function seedTasks(todayText: string): Task[] {
       id: crypto.randomUUID(),
       title: "企画書の構成ラフを作る",
       priority: "high",
+      category: "work",
       dueDate: todayText,
       bucket: "today",
       createdAt: new Date().toISOString(),
@@ -120,6 +129,7 @@ export function seedTasks(todayText: string): Task[] {
       id: crypto.randomUUID(),
       title: "週次レビューの要点整理",
       priority: "medium",
+      category: "work",
       dueDate: todayText,
       bucket: "today",
       createdAt: new Date().toISOString(),
@@ -130,6 +140,7 @@ export function seedTasks(todayText: string): Task[] {
       id: crypto.randomUUID(),
       title: "明日、顧客提案の最終チェック",
       priority: "high",
+      category: "work",
       dueDate: ymd(addDays(today, 1)),
       bucket: "upcoming",
       createdAt: new Date().toISOString(),
@@ -140,6 +151,7 @@ export function seedTasks(todayText: string): Task[] {
       id: crypto.randomUUID(),
       title: "新しいタスク分類の案",
       priority: "low",
+      category: "personal",
       dueDate: null,
       bucket: "inbox",
       createdAt: new Date().toISOString(),
